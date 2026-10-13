@@ -11,27 +11,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Lister la racine du dépôt
-        run: ls -la
-
-      - name: Trouver et décompresser le ZIP
+      - name: Décompresser le projet
         run: |
-          set -euxo pipefail
-          ZIP="$(ls -1 *.zip 2>/dev/null | head -n1 || true)"
-          if [ -z "$ZIP" ]; then
-            echo "ERREUR : aucun .zip trouvé à la racine du dépôt."; exit 1
-          fi
-          echo "Fichier ZIP trouvé : $ZIP"
+          ZIP="$(ls -1 *.zip | head -n1)"
+          echo "ZIP = $ZIP"
           mkdir -p _src
           unzip -o -q "$ZIP" -d _src
-          echo "---- arborescence _src (profondeur 3) ----"
-          find _src -maxdepth 3 -type d | sort
-          GRADLEW_PATH="$(find _src -maxdepth 4 -name gradlew -type f | head -n1 || true)"
-          if [ -z "$GRADLEW_PATH" ]; then
-            echo "ERREUR : fichier gradlew introuvable dans le ZIP."; exit 1
-          fi
-          PROJ="$(dirname "$GRADLEW_PATH")"
-          echo "Projet Android détecté : $PROJ"
+          PROJ="$(dirname "$(find _src -name gradlew | head -n1)")"
+          echo "PROJ = $PROJ"
           echo "PROJ=$PROJ" >> "$GITHUB_ENV"
 
       - name: Installer Java 17
@@ -42,30 +29,33 @@ jobs:
 
       - name: Installer le SDK Android
         uses: android-actions/setup-android@v3
-        with:
-          packages: 'platform-tools platforms;android-34 build-tools;34.0.0'
-
-      - name: Rendre gradlew exécutable
-        working-directory: ${{ env.PROJ }}
-        run: chmod +x ./gradlew
-
-      - name: Afficher les versions
-        working-directory: ${{ env.PROJ }}
-        run: |
-          java -version
-          ./gradlew --version || true
 
       - name: Compiler l'APK
         working-directory: ${{ env.PROJ }}
-        run: ./gradlew assembleDebug --no-daemon --stacktrace --warning-mode=all
-
-      - name: Lister les sorties
-        if: always()
-        working-directory: ${{ env.PROJ }}
         run: |
-          echo "--- apk/debug ---"
-          ls -la app/build/outputs/apk/debug/ 2>&1 || true
-          find app/build/outputs -type f -name "*.apk" 2>&1 || true
+          chmod +x ./gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/build-output.txt"
+
+      - name: Résumé des erreurs (visible sur la page)
+        if: failure()
+        run: |
+          {
+            echo "## ❌ Erreurs de compilation"
+            echo ""
+            echo '```'
+            grep -nE "^e: |^w: e: |FAILURE:|What went wrong|Unresolved reference|error:|Caused by:|> Task .* FAILED|cannot find symbol|None of the following" "$GITHUB_WORKSPACE/build-output.txt" | head -n 100
+            echo '```'
+            echo ""
+            echo "_(Texte complet dans l'artefact **build-output**.)_"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publier le texte complet du build
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-output
+          path: build-output.txt
+          if-no-files-found: ignore
 
       - name: Publier l'APK
         if: success()
@@ -74,13 +64,3 @@ jobs:
           name: app-debug-apk
           path: ${{ env.PROJ }}/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
-
-      - name: Publier les logs en cas d'échec
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-logs
-          path: |
-            ${{ env.PROJ }}/app/build/reports/
-            ${{ env.PROJ }}/app/build/outputs/logs/
-          if-no-files-found: ignore
