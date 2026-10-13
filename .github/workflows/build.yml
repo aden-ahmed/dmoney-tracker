@@ -35,6 +35,7 @@ jobs:
         run: |
           chmod +x ./gradlew
           ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/build-output.txt"
+          echo "BUILD_OK=true" >> "$GITHUB_ENV"
 
       - name: Résumé des erreurs (visible sur la page)
         if: failure()
@@ -43,10 +44,8 @@ jobs:
             echo "## ❌ Erreurs de compilation"
             echo ""
             echo '```'
-            grep -nE "^e: |^w: e: |FAILURE:|What went wrong|Unresolved reference|error:|Caused by:|> Task .* FAILED|cannot find symbol|None of the following" "$GITHUB_WORKSPACE/build-output.txt" | head -n 100
+            tail -200 "$GITHUB_WORKSPACE/build-output.txt" 2>/dev/null || echo "Pas de fichier build-output.txt"
             echo '```'
-            echo ""
-            echo "_(Texte complet dans l'artefact **build-output**.)_"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publier le texte complet du build
