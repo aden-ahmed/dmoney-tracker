@@ -11,97 +11,65 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Décompresser et localiser le projet
-        id: find_project
-        run: |
-          echo "=== Contenu du repo ==="
-          ls -la
-          echo ""
-
-          ZIP="$(ls -1 *.zip 2>/dev/null | head -n1)"
-          if [ -z "$ZIP" ]; then
-            echo "::error::Aucun fichier .zip trouvé dans le repo"
-            ls -laR
-            exit 1
-          fi
-          echo "ZIP trouvé : $ZIP"
-
-          mkdir -p _src
-          unzip -o "$ZIP" -d _src
-          echo ""
-          echo "=== Arborescence _src (3 niveaux) ==="
-          find _src -maxdepth 3 -type f | sort
-          echo ""
-
-          GRADLEW="$(find _src -name gradlew -type f | head -n1)"
-          if [ -z "$GRADLEW" ]; then
-            echo "::error::gradlew introuvable dans le ZIP"
-            echo "=== Tous les fichiers dans _src ==="
-            find _src -type f | sort
-            exit 1
-          fi
-
-          PROJ="$(cd "$(dirname "$GRADLEW")" && pwd)"
-          echo "PROJ=$PROJ"
-          echo "PROJ=$PROJ" >> "$GITHUB_ENV"
-          echo "proj_dir=$PROJ" >> "$GITHUB_OUTPUT"
-
-          echo ""
-          echo "=== Contenu du projet ==="
-          ls -la "$PROJ/"
-          echo ""
-          echo "=== gradlew accessible ? ==="
-          file "$PROJ/gradlew"
-
       - name: Installer Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Installer le SDK Android
-        uses: android-actions/setup-android@v3
-
-      - name: Compiler l'APK
+      - name: Build
         run: |
-          PROJ="${{ steps.find_project.outputs.proj_dir }}"
-          echo "=== Répertoire du projet : $PROJ ==="
+          set -euo pipefail
 
-          if [ -z "$PROJ" ] || [ ! -d "$PROJ" ]; then
-            echo "::error::Le répertoire du projet n'existe pas : '$PROJ'"
+          echo "::group::Extraction du ZIP"
+          ZIP="$(ls -1 *.zip 2>/dev/null | head -n1)"
+          if [ -z "$ZIP" ]; then
+            echo "::error::Aucun .zip trouvé à la racine du repo"
+            ls -la
             exit 1
           fi
+          echo "ZIP = $ZIP"
+          mkdir -p _src
+          unzip -o "$ZIP" -d _src
+          GRADLEW="$(find _src -name gradlew -type f | head -n1)"
+          if [ -z "$GRADLEW" ]; then
+            echo "::error::gradlew introuvable"
+            find _src -type f | head -30
+            exit 1
+          fi
+          PROJ="$(cd "$(dirname "$GRADLEW")" && pwd)"
+          echo "Projet trouvé : $PROJ"
+          ls -la "$PROJ/"
+          echo "::endgroup::"
 
+          echo "::group::SDK Android"
+          echo "ANDROID_HOME = $ANDROID_HOME"
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-34" "build-tools;34.0.0" 2>&1 | tail -3
+          echo "::endgroup::"
+
+          echo "::group::Compilation Gradle"
           cd "$PROJ"
-          echo "=== pwd : $(pwd) ==="
-          echo "=== Contenu ==="
-          ls -la
-          echo ""
-
           chmod +x ./gradlew
-          echo "=== Lancement Gradle ==="
           ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/build-output.txt"
-          exit ${PIPESTATUS[0]}
+          echo "::endgroup::"
 
       - name: Résumé des erreurs
         if: failure()
         run: |
           {
             echo "## Erreurs de compilation"
-            echo ""
             echo '```'
-            if [ -f "$GITHUB_WORKSPACE/build-output.txt" ]; then
-              tail -200 "$GITHUB_WORKSPACE/build-output.txt"
+            if [ -f build-output.txt ]; then
+              tail -200 build-output.txt
             else
-              echo "Le fichier build-output.txt n'a pas été créé."
-              echo "Cela signifie que l'étape de compilation n'a pas démarré."
-              echo ""
-              echo "Vérifiez que le ZIP contient bien le projet avec gradlew."
+              echo "La compilation Gradle n'a pas démarré."
+              echo "Consultez les logs de l'étape Build ci-dessus."
             fi
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Publier le log complet
+      - name: Publier le log
         if: always()
         uses: actions/upload-artifact@v4
         with:
